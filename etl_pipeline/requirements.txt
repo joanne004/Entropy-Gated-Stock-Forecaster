@@ -1,0 +1,9 @@
+yfinance
+pandas
+numpy
+matplotlib
+ta
+sqlalchemy
+kafka-python
+fastapi
+uvicorn

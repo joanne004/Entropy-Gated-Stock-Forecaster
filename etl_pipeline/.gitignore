@@ -1,0 +1,29 @@
+# Environment
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+
+# Data files (too large for GitHub)
+data/
+
+# Trained models (too large for GitHub)
+models/saved/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs
+*.log
+airflow_logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Plots
+*.png

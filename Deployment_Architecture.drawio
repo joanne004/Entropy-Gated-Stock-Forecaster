@@ -1,0 +1,144 @@
+<mxfile host="app.diagrams.net" agent="Claude">
+  <diagram name="Deployment Architecture" id="deployment-architecture-1">
+    <mxGraphModel dx="1373" dy="749" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1200" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="qwxaPRON3-o_4aRS-Tg_-8" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="" vertex="1">
+          <mxGeometry height="300" width="620" x="240" y="140" as="geometry" />
+        </mxCell>
+        <mxCell id="ext_outer" parent="1" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;align=center;fontSize=12;fillColor=none;strokeColor=#1A1A1A;" value="External Data Sources" vertex="1">
+          <mxGeometry height="92" width="500" x="235" y="18" as="geometry" />
+        </mxCell>
+        <mxCell id="yahoo" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#1A1A1A;dashed=1;fontSize=11;" value="Yahoo Finance&#xa;(yfinance), OHLCV prices" vertex="1">
+          <mxGeometry height="50" width="150" x="250" y="48" as="geometry" />
+        </mxCell>
+        <mxCell id="newsapi" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#1A1A1A;dashed=1;fontSize=11;" value="NewsAPI / RSS&#xa;financial headlines" vertex="1">
+          <mxGeometry height="50" width="150" x="410" y="48" as="geometry" />
+        </mxCell>
+        <mxCell id="reddit" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#1A1A1A;dashed=1;fontSize=11;" value="Reddit (PRAW)&#xa;retail-sentiment posts" vertex="1">
+          <mxGeometry height="50" width="150" x="570" y="48" as="geometry" />
+        </mxCell>
+        <mxCell id="kafka" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#1A1A1A;fontSize=12;" value="Apache Kafka&#xa;raw event streaming" vertex="1">
+          <mxGeometry height="56" width="170" x="400" y="150" as="geometry" />
+        </mxCell>
+        <mxCell id="qwxaPRON3-o_4aRS-Tg_-2" edge="1" parent="1" source="airflow" style="edgeStyle=none;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="spark" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="720" y="240" />
+              <mxPoint x="460" y="240" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="airflow" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#1A1A1A;fontSize=12;" value="Apache Airflow&#xa;DAG scheduler / orchestrator" vertex="1">
+          <mxGeometry height="56" width="205" x="615" y="150" as="geometry" />
+        </mxCell>
+        <mxCell id="spark" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#1A1A1A;fontSize=12;" value="Apache Spark&#xa;(PySpark) batch transform" vertex="1">
+          <mxGeometry height="56" width="170" x="375" y="278" as="geometry" />
+        </mxCell>
+        <mxCell id="minio" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#1A1A1A;fontSize=12;" value="MinIO / S3&#xa;raw data lake (Parquet)" vertex="1">
+          <mxGeometry height="56" width="170" x="585" y="278" as="geometry" />
+        </mxCell>
+        <mxCell id="postgres" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#1A1A1A;fontSize=12;" value="PostgreSQL&#xa;processed feature store (X_t, S_t, H_t)" vertex="1">
+          <mxGeometry height="56" width="370" x="400" y="372" as="geometry" />
+        </mxCell>
+        <mxCell id="ml_outer" parent="1" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;align=center;fontSize=12;fillColor=none;strokeColor=#1A1A1A;" value="ML Inference Server" vertex="1">
+          <mxGeometry height="115" width="560" x="235" y="470" as="geometry" />
+        </mxCell>
+        <mxCell id="finbert" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#1A1A1A;dashed=1;fontSize=11;" value="FinBERT&#xa;(sentiment + S_t, H_t)" vertex="1">
+          <mxGeometry height="68" width="125" x="252" y="500" as="geometry" />
+        </mxCell>
+        <mxCell id="entropy" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#1A1A1A;dashed=1;fontSize=11;" value="Entropy Gate&#xa;α_t = σ(w·H_t + b) → F_t" vertex="1">
+          <mxGeometry height="68" width="150" x="390" y="500" as="geometry" />
+        </mxCell>
+        <mxCell id="informer" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#1A1A1A;dashed=1;fontSize=11;" value="Informer&#xa;multi-step price forecast" vertex="1">
+          <mxGeometry height="68" width="125" x="553" y="500" as="geometry" />
+        </mxCell>
+        <mxCell id="mlflow" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#1A1A1A;dashed=1;fontSize=11;" value="MLflow&#xa;experiment / model registry" vertex="1">
+          <mxGeometry height="68" width="90" x="691" y="500" as="geometry" />
+        </mxCell>
+        <mxCell id="agentic_outer" parent="1" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;align=center;fontSize=12;fillColor=none;strokeColor=#1A1A1A;" value="Agentic Coordination Layer&#xa;(LangGraph)" vertex="1">
+          <mxGeometry height="245" width="675" x="178" y="622" as="geometry" />
+        </mxCell>
+        <mxCell id="orchestrator" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#1A1A1A;dashed=1;fontSize=11;" value="Orchestrator Agent&#xa;dispatch tasks, merges results" vertex="1">
+          <mxGeometry height="50" width="240" x="385" y="650" as="geometry" />
+        </mxCell>
+        <mxCell id="sentiment" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#1A1A1A;dashed=1;fontSize=11;" value="Sentiment Agent&#xa;calls FinBERT, outputs&#xa;sentiment score S_t + entropy H_t" vertex="1">
+          <mxGeometry height="62" width="190" x="200" y="732" as="geometry" />
+        </mxCell>
+        <mxCell id="fusion" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#1A1A1A;dashed=1;fontSize=11;" value="Fusion / Gating Agent&#xa;fetches X_t, runs Entropy Gate,&#xa;computes α_t and fused F_t" vertex="1">
+          <mxGeometry height="62" width="190" x="412" y="732" as="geometry" />
+        </mxCell>
+        <mxCell id="forecast" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#1A1A1A;dashed=1;fontSize=11;" value="Forecast Agent&#xa;feeds F_t to Informer,&#xa;returns price prediction" vertex="1">
+          <mxGeometry height="62" width="190" x="624" y="732" as="geometry" />
+        </mxCell>
+        <mxCell id="redis" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#1A1A1A;dashed=1;fontSize=11;" value="Redis, shared working memory (conversation state, intermediate S_t / H_t / X_t / α_t / F_t, agent scratchpad)" vertex="1">
+          <mxGeometry height="40" width="614" x="200" y="812" as="geometry" />
+        </mxCell>
+        <mxCell id="output_outer" parent="1" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;align=center;fontSize=12;fillColor=none;strokeColor=#1A1A1A;" value="Output Layer" vertex="1">
+          <mxGeometry height="148" width="290" x="362" y="900" as="geometry" />
+        </mxCell>
+        <mxCell id="fastapi" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#1A1A1A;dashed=1;fontSize=11;" value="FastAPI&#xa;REST endpoint for predictions" vertex="1">
+          <mxGeometry height="48" width="190" x="412" y="932" as="geometry" />
+        </mxCell>
+        <mxCell id="streamlit" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#1A1A1A;dashed=1;fontSize=11;" value="Streamlit Dashboard&#xa;charts, forecast, α_t over time" vertex="1">
+          <mxGeometry height="38" width="190" x="412" y="1000" as="geometry" />
+        </mxCell>
+        <mxCell id="mon_outer" parent="1" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;align=center;fontSize=12;fillColor=none;strokeColor=#1A1A1A;" value="Monitoring &amp; Ops" vertex="1">
+          <mxGeometry height="565" width="220" x="935" y="68" as="geometry" />
+        </mxCell>
+        <mxCell id="prometheus" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#1A1A1A;dashed=1;fontSize=11;" value="Prometheus, metrics scraping" vertex="1">
+          <mxGeometry height="42" width="190" x="950" y="104" as="geometry" />
+        </mxCell>
+        <mxCell id="grafana" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#1A1A1A;dashed=1;fontSize=11;" value="Grafana, dashboards / alerts" vertex="1">
+          <mxGeometry height="42" width="190" x="950" y="160" as="geometry" />
+        </mxCell>
+        <mxCell id="gx" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#1A1A1A;dashed=1;fontSize=11;" value="Great Expectations, data QA" vertex="1">
+          <mxGeometry height="42" width="190" x="950" y="216" as="geometry" />
+        </mxCell>
+        <mxCell id="alertmgr" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#1A1A1A;dashed=1;fontSize=11;" value="Alertmanager, paging" vertex="1">
+          <mxGeometry height="42" width="190" x="950" y="272" as="geometry" />
+        </mxCell>
+        <mxCell id="docker" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#1A1A1A;dashed=1;fontSize=11;" value="Docker / Kubernetes, runtime" vertex="1">
+          <mxGeometry height="42" width="190" x="950" y="328" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" edge="1" parent="1" source="ext_outer" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#1A1A1A;fontSize=10;labelBackgroundColor=#ffffff;" target="kafka" value="in">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" edge="1" parent="1" source="kafka" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#1A1A1A;fontSize=10;labelBackgroundColor=#ffffff;" target="airflow" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" edge="1" parent="1" source="spark" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#1A1A1A;fontSize=10;labelBackgroundColor=#ffffff;" target="minio" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" edge="1" parent="1" source="spark" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#1A1A1A;fontSize=10;labelBackgroundColor=#ffffff;" target="postgres" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e9" edge="1" parent="1" source="postgres" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#1A1A1A;fontSize=10;labelBackgroundColor=#ffffff;" target="ml_outer" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e11" edge="1" parent="1" source="ml_outer" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#1A1A1A;fontSize=10;labelBackgroundColor=#ffffff;" target="agentic_outer" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e12" edge="1" parent="1" source="orchestrator" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#1A1A1A;fontSize=10;labelBackgroundColor=#ffffff;" target="sentiment" value="dispatch">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e13" edge="1" parent="1" source="orchestrator" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#1A1A1A;fontSize=10;labelBackgroundColor=#ffffff;" target="fusion" value="fetch X_t request">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e14" edge="1" parent="1" source="forecast" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#1A1A1A;fontSize=10;labelBackgroundColor=#ffffff;" target="orchestrator" value="prediction + interval">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e16" edge="1" parent="1" source="agentic_outer" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#1A1A1A;fontSize=10;labelBackgroundColor=#ffffff;" target="output_outer" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e18" edge="1" parent="1" source="fastapi" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#1A1A1A;fontSize=10;labelBackgroundColor=#ffffff;" target="streamlit" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="qwxaPRON3-o_4aRS-Tg_-3" edge="1" parent="1" source="airflow" style="endArrow=classic;html=1;rounded=0;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="prometheus" value="">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <Array as="points">
+              <mxPoint x="880" y="178" />
+              <mxPoint x="880" y="125" />
+            </Array>
+            <mxPoint x="680" y="440" as
