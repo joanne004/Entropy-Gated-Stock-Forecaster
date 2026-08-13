@@ -54,7 +54,7 @@ def fetch_prediction(ticker: str = "AAPL"):
         r = requests.get(
             f"{INFERENCE_SERVER_URL}/predict",
             params  = {"ticker": ticker},
-            timeout = 10,
+            timeout = 60,  # Render free tier needs ~30-60s to wake up
         )
         return r.json()
     except Exception as e:
