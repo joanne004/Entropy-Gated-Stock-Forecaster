@@ -21,12 +21,11 @@ pandas
 numpy
 scikit-learn
 xgboost
-tensorflow
+tensorflow-cpu
 joblib
 
-# ── Local pipeline (ETL, scraping, FinBERT) — not needed on Render/Streamlit──
+# ── Local pipeline (ETL, scraping, FinBERT) — NOT needed on Render/Streamlit──
+# Install separately locally: pip install yfinance ta transformers torch pytz
 yfinance
 ta
-transformers
-torch
 pytz

@@ -2,7 +2,7 @@ services:
   - type: web
     name: stock-inference-server
     runtime: python
-    buildCommand: pip install fastapi uvicorn[standard] sqlalchemy psycopg2-binary pandas numpy scikit-learn xgboost tensorflow joblib python-dotenv langchain langchain-groq langgraph requests
+    buildCommand: pip install -r requirements.txt
     startCommand: uvicorn inference_server:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
 
