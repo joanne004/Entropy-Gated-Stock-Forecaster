@@ -157,12 +157,9 @@ def get_recent_performance() -> dict:
     return {"last_5_days": records}
 
 
-# ── LLM setup ─────────────────────────────────────────────────────────────────
-llm = ChatGroq(
-    model       = "llama-3.3-70b-versatile",
-    temperature = 0.1,
-    api_key     = GROQ_API_KEY,
-)
+# ── LLM setup (lazy — initialised on first ask_agent() call) ──────────────────
+_llm   = None
+_agent = None
 
 
 # ── System prompt — one-shot + chain-of-thought ───────────────────────────────
@@ -212,22 +209,31 @@ IMPORTANT RULES:
 """)
 
 
-# ── Agent setup ───────────────────────────────────────────────────────────────
-tools = [get_prediction, get_latest_features, get_entropy_history, get_recent_performance]
-agent = create_react_agent(llm, tools, prompt=system_prompt)
-
-
 # ── ask_agent() — callable by Streamlit ───────────────────────────────────────
 def ask_agent(question: str, ticker: str = "AAPL") -> str:
     """
     Single-question interface for Streamlit.
     Sets CURRENT_TICKER before invoking so all tools query the right stock.
     Returns the agent's final answer as a plain string.
+    Initialises the LLM and agent on first call so the module can be imported
+    even before GROQ_API_KEY is available in the environment.
     """
-    global CURRENT_TICKER
+    global CURRENT_TICKER, _llm, _agent
     CURRENT_TICKER = ticker.upper()
+
+    # Lazy init — reads env var at call time, not at import time
+    if _agent is None:
+        key = os.environ.get("GROQ_API_KEY", "")
+        _llm = ChatGroq(
+            model       = "llama-3.3-70b-versatile",
+            temperature = 0.1,
+            api_key     = key,
+        )
+        _tools = [get_prediction, get_latest_features, get_entropy_history, get_recent_performance]
+        _agent = create_react_agent(_llm, _tools, prompt=system_prompt)
+
     try:
-        response = agent.invoke({"messages": [("user", question)]})
+        response = _agent.invoke({"messages": [("user", question)]})
         return response["messages"][-1].content
     except Exception as e:
         return f"Error: {e}"
