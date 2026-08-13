@@ -11,8 +11,8 @@ venv/
 # Data files (too large for GitHub)
 data/
 
-# Trained models (too large for GitHub)
-models/saved/
+# Model plots (covered by *.png rule below)
+# models/saved/ — NOT ignored, files are small enough for GitHub (~300KB each)
 
 # Jupyter
 .ipynb_checkpoints/

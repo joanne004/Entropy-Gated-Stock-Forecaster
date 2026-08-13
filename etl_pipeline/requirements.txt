@@ -1,9 +1,32 @@
-yfinance
+# ── Inference server (Render) ─────────────────────────────────────────────────
+fastapi
+uvicorn[standard]
+python-dotenv
+
+# ── Streamlit UI (Streamlit Cloud) ────────────────────────────────────────────
+streamlit
+requests
+
+# ── Agent / LLM ───────────────────────────────────────────────────────────────
+langchain
+langchain-groq
+langgraph
+
+# ── Database ──────────────────────────────────────────────────────────────────
+sqlalchemy
+psycopg2-binary
+
+# ── Data & ML ─────────────────────────────────────────────────────────────────
 pandas
 numpy
-matplotlib
+scikit-learn
+xgboost
+tensorflow
+joblib
+
+# ── Local pipeline (ETL, scraping, FinBERT) — not needed on Render/Streamlit──
+yfinance
 ta
-sqlalchemy
-kafka-python
-fastapi
-uvicorn
+transformers
+torch
+pytz

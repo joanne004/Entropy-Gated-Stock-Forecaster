@@ -36,7 +36,7 @@ from ta.trend import SMAIndicator, ADXIndicator, MACD
 from ta.momentum import RSIIndicator
 from ta.volume import OnBalanceVolumeIndicator
 
-TICKER = "AAPL"
+TICKERS = ["AAPL", "MSFT", "TSLA", "NVDA", "GOOGL"]
 START  = "2018-01-01"
 END    = datetime.today().strftime("%Y-%m-%d")   # always pulls up to today
 SMA_WINDOW = 20
@@ -44,10 +44,8 @@ RSI_WINDOW = 14
 ADX_WINDOW = 14
 
 DATA_DIR = "data"
-CSV_PATH = os.path.join(DATA_DIR, f"X_t_{TICKER}.csv")
-PLOT_PATH = os.path.join(DATA_DIR, f"X_t_{TICKER}_sanity_check.png")
 
-FEATURE_COLS = ["SMA_20", "RSI_14", "OBV", "ADX_14", "MACD"]
+FEATURE_COLS = ["SMA_20", "RSI_14", "OBV", "ADX_14", "MACD", "VIX"]
 
 
 def _mask_adx_warmup(adx: pd.Series) -> pd.Series:
@@ -80,6 +78,21 @@ def extract(ticker: str, start: str, end: str) -> pd.DataFrame:
     if isinstance(raw.columns, pd.MultiIndex):
         raw.columns = raw.columns.get_level_values(0)
         raw.columns.name = None
+
+    # Download VIX (CBOE Volatility Index) and merge on date.
+    # VIX measures the market's expectation of 30-day volatility.
+    # High VIX = fear/uncertainty → predictions less reliable.
+    # Low VIX  = calm market    → trends more likely to hold.
+    print(f"Pulling VIX from Yahoo Finance...")
+    vix = yf.download("^VIX", start=start, end=end, auto_adjust=True, progress=False)
+    if isinstance(vix.columns, pd.MultiIndex):
+        vix.columns = vix.columns.get_level_values(0)
+        vix.columns.name = None
+    vix = vix[["Close"]].rename(columns={"Close": "VIX"})
+
+    # Left join — keeps all AAPL trading days, fills any VIX gaps forward
+    raw = raw.join(vix, how="left")
+    raw["VIX"] = raw["VIX"].ffill()
 
     return raw
 
@@ -126,6 +139,7 @@ def transform(df: pd.DataFrame) -> pd.DataFrame:
     # Negative = short-term momentum below long-term (bearish pressure building)
     # Crossing zero = potential reversal signal
     out["MACD"] = MACD(close=out["Close"]).macd_diff()
+    # VIX is already in the dataframe from extract() — no computation needed
 
     return out
 
@@ -198,28 +212,40 @@ def load(x_t: pd.DataFrame, path: str) -> None:
 def main():
     os.makedirs(DATA_DIR, exist_ok=True)
 
-    print("\n--- Stage 1: Extract ---")
-    raw = extract(TICKER, START, END)
+    for ticker in TICKERS:
+        csv_path  = os.path.join(DATA_DIR, f"X_t_{ticker}.csv")
+        plot_path = os.path.join(DATA_DIR, f"X_t_{ticker}_sanity_check.png")
 
-    print("\n--- Stage 2: Validate ---")
-    validate(raw)
+        print(f"\n{'='*55}")
+        print(f"  Processing {ticker}")
+        print(f"{'='*55}")
 
-    print("\n--- Stage 3: Transform ---")
-    transformed = transform(raw)
+        print("\n--- Stage 1: Extract ---")
+        raw = extract(ticker, START, END)
 
-    print("\n--- Stage 4: Clean ---")
-    cleaned = clean(transformed, FEATURE_COLS)
+        print("\n--- Stage 2: Validate ---")
+        validate(raw)
 
-    print("\n--- Stage 5: Assemble ---")
-    x_t = assemble(cleaned, FEATURE_COLS, TICKER)
-    print(f"\nX_t shape: {x_t.shape}")
-    print(x_t.tail(10))
+        print("\n--- Stage 3: Transform ---")
+        transformed = transform(raw)
 
-    print("\n--- Stage 6: Plot ---")
-    plot(cleaned, TICKER, PLOT_PATH)
+        print("\n--- Stage 4: Clean ---")
+        cleaned = clean(transformed, FEATURE_COLS)
 
-    print("\n--- Stage 7: Load ---")
-    load(x_t, CSV_PATH)
+        print("\n--- Stage 5: Assemble ---")
+        x_t = assemble(cleaned, FEATURE_COLS, ticker)
+        print(f"\nX_t shape: {x_t.shape}")
+        print(x_t.tail(3))
+
+        print("\n--- Stage 6: Plot ---")
+        plot(cleaned, ticker, plot_path)
+
+        print("\n--- Stage 7: Load ---")
+        load(x_t, csv_path)
+
+    print(f"\n{'='*55}")
+    print(f"  All {len(TICKERS)} tickers processed.")
+    print(f"{'='*55}")
 
 
 if __name__ == "__main__":

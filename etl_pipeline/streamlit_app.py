@@ -1,13 +1,17 @@
 """
-Streamlit UI — AAPL Stock Direction Predictor
-=============================================
+Streamlit UI — Multi-Stock Direction Predictor
+===============================================
 Run with:
   streamlit run streamlit_app.py
 
 Make sure the inference server is running first:
   python -m uvicorn inference_server:app --port 8001
+
+Supported tickers: AAPL, MSFT, TSLA, NVDA, GOOGL
+Note: Reddit sentiment is only available for AAPL.
 """
 
+import os
 import requests
 import streamlit as st
 from dotenv import load_dotenv
@@ -19,29 +23,45 @@ from agent import ask_agent
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title = "AAPL Predictor",
+    page_title = "Stock Direction Predictor",
     page_icon  = "📈",
     layout     = "wide",
 )
 
 
 # ── Header ────────────────────────────────────────────────────────────────────
-st.title("📈 AAPL Stock Direction Predictor")
-st.caption("Entropy-Gated Adaptive Hybrid Forecasting System · York University Capstone")
+st.title("📈 Stock Direction Predictor")
+st.caption("Entropy-Gated Adaptive Hybrid Forecasting System")
+
+# ── Ticker selector ───────────────────────────────────────────────────────────
+TICKERS = ["AAPL", "MSFT", "TSLA", "NVDA", "GOOGL"]
+ticker = st.selectbox(
+    "Select stock",
+    TICKERS,
+    index = 0,
+    help  = "Reddit sentiment data is only available for AAPL. Other tickers use price indicators only.",
+)
+
 st.divider()
 
 
 # ── Fetch prediction from inference server ────────────────────────────────────
-@st.cache_data(ttl=300)   # cache for 5 minutes — avoids hammering the server on rerenders
-def fetch_prediction():
+INFERENCE_SERVER_URL = os.environ.get("INFERENCE_SERVER_URL", "http://localhost:8001")
+
+
+def fetch_prediction(ticker: str = "AAPL"):
     try:
-        r = requests.get("http://localhost:8001/predict", timeout=10)
+        r = requests.get(
+            f"{INFERENCE_SERVER_URL}/predict",
+            params  = {"ticker": ticker},
+            timeout = 10,
+        )
         return r.json()
     except Exception as e:
         return {"error": str(e)}
 
 
-pred = fetch_prediction()
+pred = fetch_prediction(ticker)
 
 
 # ── Layout: left = prediction panel, right = chat ─────────────────────────────
@@ -50,7 +70,7 @@ left, right = st.columns([1, 1.6], gap="large")
 
 # ── LEFT: Prediction panel ────────────────────────────────────────────────────
 with left:
-    st.subheader("Next-Day Prediction")
+    st.subheader(f"{ticker} — Next-Day Prediction")
 
     if "error" in pred:
         st.error(f"Inference server not reachable: {pred['error']}")
@@ -73,13 +93,23 @@ with left:
         st.divider()
 
         # Model probabilities
+        # Numeric delta = prob minus 50% baseline.
+        # Positive → green up arrow (UP), negative → red down arrow (DOWN).
         st.markdown("**Model Probabilities**")
         col1, col2 = st.columns(2)
-        col1.metric("XGBoost", f"{pred.get('xgb_probability_up', 0)*100:.1f}%", "UP" if pred.get('xgb_direction') == 'UP' else "DOWN")
-        col2.metric("LSTM",    f"{pred.get('lstm_probability_up', 0)*100:.1f}%", "UP" if pred.get('lstm_direction') == 'UP' else "DOWN")
+        xgb_prob = pred.get("xgb_probability_up", 0.5)
+        lstm_prob = pred.get("lstm_probability_up", 0.5)
+        xgb_dir  = pred.get("xgb_direction", "—")
+        lstm_dir = pred.get("lstm_direction", "—")
+        col1.metric("XGBoost", f"{xgb_prob*100:.1f}% · {xgb_dir}",
+                    delta=round((xgb_prob - 0.5) * 100, 2),
+                    delta_color="normal")
+        col2.metric("LSTM",    f"{lstm_prob*100:.1f}% · {lstm_dir}",
+                    delta=round((lstm_prob - 0.5) * 100, 2),
+                    delta_color="normal")
 
         combined_pct = pred.get("combined_probability", 0.5) * 100
-        st.metric("Combined (70% XGB + 30% LSTM)", f"{combined_pct:.1f}%")
+        st.metric("Combined (85% XGB + 15% LSTM)", f"{combined_pct:.1f}%")
 
         st.divider()
 
@@ -100,7 +130,12 @@ with left:
 # ── RIGHT: Agent chat ─────────────────────────────────────────────────────────
 with right:
     st.subheader("Ask the Analyst Agent")
-    st.caption("Powered by Llama 3.3 70B via Groq · Uses live prediction + DB data")
+    st.caption(f"Powered by Llama 3.3 70B via Groq · Analysing {ticker}")
+
+    # Reset chat history when ticker changes
+    if st.session_state.get("last_ticker") != ticker:
+        st.session_state.messages = []
+        st.session_state["last_ticker"] = ticker
 
     # Initialise chat history in session state
     if "messages" not in st.session_state:
@@ -111,15 +146,15 @@ with right:
     with chat_container:
         if not st.session_state.messages:
             st.markdown(
-                "_Ask me anything about AAPL — e.g. 'What is the prediction for tomorrow?' "
-                "or 'What do the technical indicators say?'_"
+                f"_Ask me anything about {ticker} — e.g. 'What is the prediction for tomorrow?' "
+                f"or 'What do the technical indicators say?'_"
             )
         for msg in st.session_state.messages:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
 
     # Chat input
-    if prompt := st.chat_input("Ask about AAPL..."):
+    if prompt := st.chat_input(f"Ask about {ticker}..."):
         # Add user message to history and rerender
         st.session_state.messages.append({"role": "user", "content": prompt})
 
@@ -129,7 +164,7 @@ with right:
 
             with st.chat_message("assistant"):
                 with st.spinner("Analyzing..."):
-                    answer = ask_agent(prompt)
+                    answer = ask_agent(prompt, ticker=ticker)
                 st.markdown(answer)
 
         st.session_state.messages.append({"role": "assistant", "content": answer})

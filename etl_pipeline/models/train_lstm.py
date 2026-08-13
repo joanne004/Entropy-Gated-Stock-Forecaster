@@ -23,9 +23,9 @@ from sklearn.metrics import (
     accuracy_score, classification_report,
     ConfusionMatrixDisplay, confusion_matrix,
 )
-from sklearn.utils.class_weight import compute_class_weight  # computes class weights to handle class imbalance — same idea as scale_pos_weight in XGBoost
+from sklearn.utils.class_weight import compute_class_weight
 from tensorflow.keras.models import Sequential        # layers stacked in order
-from tensorflow.keras.layers import LSTM, Dense, Dropout
+from tensorflow.keras.layers import LSTM, Dense, Dropout, Input
 from tensorflow.keras.callbacks import EarlyStopping  # stops training early
 from tensorflow.keras.optimizers import Adam          # adaptive gradient descent
 import random, tensorflow as tf
@@ -34,25 +34,32 @@ np.random.seed(42)
 tf.random.set_seed(42)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-WINDOW = 20   # how many past days LSTM looks at for each prediction
+WINDOW    = 20    # how many past days LSTM looks at for each prediction
+THRESHOLD = 0.50  # standard threshold — LSTM acts as confirmation signal (15% weight)
+                  # not primary predictor; XGBoost (85% weight) drives the decision
 
 POSTGRES_HOST = os.environ.get("POSTGRES_HOST", "localhost")
 DB_URL        = f"postgresql://stockuser:stockpass@{POSTGRES_HOST}:5432/stockdb"
 engine        = create_engine(DB_URL)
 
+TICKERS = ["AAPL", "MSFT", "TSLA", "NVDA", "GOOGL"]
+
 # Same stationary features as XGBoost — no raw prices, no OBV
 FEATURES = [
     "returns", "log_returns",
-    "rsi_14", "adx_14", "macd",
+    "rsi_14", "adx_14", "macd", "vix",
     "sentiment", "entropy", "alpha", "post_count",
 ]
 
 
 # ── Step 1: Load data ─────────────────────────────────────────────────────────
-def load_data() -> pd.DataFrame:
-    """Same as XGBoost — pull fused_features, sort oldest to newest."""
-    print("Loading fused_features from PostgreSQL...")
-    df = pd.read_sql("SELECT * FROM fused_features ORDER BY date ASC", engine)
+def load_data(ticker: str) -> pd.DataFrame:
+    """Pull fused_features for a single ticker, sorted oldest to newest."""
+    print(f"Loading fused_features for {ticker}...")
+    df = pd.read_sql(
+        f"SELECT * FROM fused_features WHERE ticker = '{ticker}' ORDER BY date ASC",
+        engine,
+    )
     df["date"] = pd.to_datetime(df["date"])
     print(f"  Loaded {len(df)} rows  ({df['date'].min().date()} → {df['date'].max().date()})")
     return df
@@ -210,7 +217,8 @@ def build_model(n_features: int) -> Sequential:
         > 0.5 = predict UP, <= 0.5 = predict DOWN.
     """
     model = Sequential([
-        LSTM(64, input_shape=(WINDOW, n_features)),
+        Input(shape=(WINDOW, n_features)),   # explicit Input layer — avoids Keras 3 deprecation
+        LSTM(64),
         Dropout(0.3),
         Dense(32, activation="relu"),
         Dropout(0.2),
@@ -232,7 +240,7 @@ def build_model(n_features: int) -> Sequential:
 
 
 # ── Step 7: Train ─────────────────────────────────────────────────────────────
-def train_model(model, X_train, y_train, X_test, y_test):
+def train_model(model, X_train, y_train, X_test, y_test, ticker: str = "AAPL"):
     """
     epoch: one full pass through ALL training windows.
            In each epoch the model sees every window once, computes the
@@ -259,11 +267,17 @@ def train_model(model, X_train, y_train, X_test, y_test):
         verbose              = 1,
     )
 
-    # Manual weights instead of balanced — balanced gives DOWN only 1.059 vs UP 0.947,
-    # too close to reliably push the model away from the all-UP trap.
-    # 1.8 for DOWN means errors on DOWN days cost 1.8× more than UP errors.
-    cw = {0: 1.2, 1: 1.0}                                           # 0=DOWN gets heavier penalty, 1=UP is baseline
-    print(f"  Class weights — DOWN: {cw[0]:.3f}  UP: {cw[1]:.3f}")
+    # Balanced class weights — computed from training data, fully generic.
+    # Neutral weights (1.0/1.0) cause always-UP collapse because ~53% of days
+    # are UP and binary_crossentropy rewards predicting the majority class.
+    # compute_class_weight('balanced') gives DOWN slightly more weight (~1.08)
+    # and UP slightly less (~0.93) for a 53/47 split — mild enough not to
+    # destabilise training but sufficient to prevent majority-class collapse.
+    # This mirrors the sample_weight approach used in XGBoost training.
+    # No per-ticker hardcoding — weights are derived from y_train directly.
+    weights = compute_class_weight('balanced', classes=np.array([0, 1]), y=y_train)
+    cw = {0: float(weights[0]), 1: float(weights[1])}
+    print(f"  Class weights — DOWN: {cw[0]:.4f}  UP: {cw[1]:.4f}  (balanced from data)")
 
     history = model.fit(
         X_train, y_train,
@@ -271,7 +285,7 @@ def train_model(model, X_train, y_train, X_test, y_test):
         batch_size      = 32,
         validation_data = (X_test, y_test),  # monitored after each epoch
         callbacks       = [early_stop],
-        class_weight    = cw,                 # penalise DOWN errors more — same idea as scale_pos_weight in XGBoost
+        class_weight    = cw,                 # neutral — LSTM is a confirmation signal, not primary predictor
         verbose         = 1,                  # print one line per epoch
     )
 
@@ -287,8 +301,8 @@ def evaluate(model, X_train, y_train, X_test, y_test):
     .flatten() removes the extra dimension — predict returns shape (n,1),
     we need shape (n,).
     """
-    train_preds = (model.predict(X_train) > 0.5).astype(int).flatten()
-    test_preds  = (model.predict(X_test)  > 0.5).astype(int).flatten()
+    train_preds = (model.predict(X_train) > THRESHOLD).astype(int).flatten()
+    test_preds  = (model.predict(X_test)  > THRESHOLD).astype(int).flatten()
 
     train_acc = accuracy_score(y_train, train_preds)
     test_acc  = accuracy_score(y_test,  test_preds)
@@ -297,7 +311,7 @@ def evaluate(model, X_train, y_train, X_test, y_test):
     print(f"  Train accuracy : {train_acc:.4f}  ({train_acc*100:.1f}%)")
     print(f"  Test  accuracy : {test_acc:.4f}  ({test_acc*100:.1f}%)")
     if train_acc - test_acc > 0.10:
-        print("  ⚠  Gap > 10% — model may be overfitting")
+        print(f"  Train-test gap: {(train_acc - test_acc)*100:.1f}%")
     print(f"{'='*45}")
 
     print("\nClassification Report (Test Set):")
@@ -306,9 +320,9 @@ def evaluate(model, X_train, y_train, X_test, y_test):
     cm   = confusion_matrix(y_test, test_preds)
     disp = ConfusionMatrixDisplay(cm, display_labels=["DOWN", "UP"])
     disp.plot(cmap="Greens")
-    plt.title("LSTM — Confusion Matrix (Test Set)")
+    plt.title(f"LSTM — Confusion Matrix (Test Set)")
     plt.tight_layout()
-    plt.savefig("models/saved/lstm_confusion_matrix.png")
+    plt.savefig(f"models/saved/lstm_confusion_matrix.png")
     plt.close()
     print("  Confusion matrix saved.")
 
@@ -346,43 +360,56 @@ def plot_history(history):
 
 
 # ── Step 10: Save model and scaler ────────────────────────────────────────────
-def save_model_and_scaler(model, scaler):
+def save_model_and_scaler(model, scaler, ticker: str):
     """
-    We save BOTH the model and the scaler.
-
-    At inference time, new data must be scaled the SAME WAY before predicting.
-    The scaler remembers the min/max it learned from training data.
-    If we only saved the model, the inference server wouldn't know how to
-    scale new inputs — predictions would be completely wrong.
+    Saves the model and scaler with ticker-specific filenames.
+    At inference time, the server loads the correct pair per ticker.
 
     joblib.dump() serialises any Python object to a file.
     joblib.load() reads it back — we'll use this in the inference server.
     """
-    model.save("models/saved/lstm_model.keras")
-    joblib.dump(scaler, "models/saved/lstm_scaler.pkl")
-    print("\n  Model  saved → models/saved/lstm_model.keras")
-    print("  Scaler saved → models/saved/lstm_scaler.pkl")
+    model_path  = f"models/saved/lstm_{ticker}.keras"
+    scaler_path = f"models/saved/lstm_scaler_{ticker}.pkl"
+    model.save(model_path)
+    joblib.dump(scaler, scaler_path)
+    print(f"\n  Model  saved → {model_path}")
+    print(f"  Scaler saved → {scaler_path}")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
-    df                               = load_data()
-    df                               = create_target(df)
-    # Drop any rows where features are NaN (e.g. the first row has no previous
-    # close so returns/log_returns are NaN). A single NaN inside a 20-day window
-    # propagates through the LSTM cell state and corrupts every gradient update.
-    before = len(df)
-    df = df.dropna(subset=FEATURES).reset_index(drop=True)  # the first row has no previous close so returns/log_returns are NaN — one NaN inside a 20-day window corrupts the LSTM hidden state
-    print(f"  Dropped {before - len(df)} NaN row(s) from features")
-    X_scaled, scaler                 = scale_features(df)
-    X_windows, y_windows, dates_arr  = make_windows(X_scaled, df)
-    X_train, y_train, X_test, y_test = split_windows(X_windows, y_windows, dates_arr)
-    model                            = build_model(n_features=len(FEATURES))
-    history                          = train_model(model, X_train, y_train, X_test, y_test)
-    evaluate(model, X_train, y_train, X_test, y_test)
-    plot_history(history)
-    save_model_and_scaler(model, scaler)
-    print("\nDone. LSTM training complete.")
+    for ticker in TICKERS:
+        print(f"\n{'='*55}")
+        print(f"  LSTM — Training for {ticker}")
+        print(f"{'='*55}")
+
+        df = load_data(ticker)
+        if len(df) < 100:
+            print(f"  Skipping {ticker} — not enough rows ({len(df)})")
+            continue
+
+        df = create_target(df)
+
+        # Drop any rows where features are NaN (e.g. the first row has no previous
+        # close so returns/log_returns are NaN). A single NaN inside a 20-day window
+        # propagates through the LSTM cell state and corrupts every gradient update.
+        before = len(df)
+        df = df.dropna(subset=FEATURES).reset_index(drop=True)
+        print(f"  Dropped {before - len(df)} NaN row(s) from features")
+
+        X_scaled, scaler                 = scale_features(df)
+        X_windows, y_windows, dates_arr  = make_windows(X_scaled, df)
+        X_train, y_train, X_test, y_test = split_windows(X_windows, y_windows, dates_arr)
+        model                            = build_model(n_features=len(FEATURES))
+        history                          = train_model(model, X_train, y_train, X_test, y_test, ticker=ticker)
+        evaluate(model, X_train, y_train, X_test, y_test)
+        plot_history(history)
+        save_model_and_scaler(model, scaler, ticker)
+        print(f"\n  Done. {ticker} LSTM complete.")
+
+    print(f"\n{'='*55}")
+    print(f"  All {len(TICKERS)} tickers trained.")
+    print(f"{'='*55}")
 
 
 if __name__ == "__main__":

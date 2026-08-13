@@ -4,27 +4,53 @@ Step 2b -- Reddit Incremental Update
 Fetches only NEW Reddit posts from the last date in the existing CSV up to today.
 Merges with existing data and saves. Run this whenever you want to update sentiment.
 
-This avoids re-fetching 2018-2024 data that is already in the checkpoint.
+If no existing CSV is found, performs a full fetch from 2018 (same as step2a).
+
+Usage:
+  python step2b_reddit_incremental.py          # defaults to AAPL
+  python step2b_reddit_incremental.py MSFT
+  python step2b_reddit_incremental.py NVDA
 """
 
 import os
+import sys
 import time
 import requests
 import pandas as pd
 from datetime import datetime, timedelta
 import pytz
-import json
 
-TICKER     = "AAPL"
-KEYWORDS   = ["AAPL", "Apple"]
-SUBREDDITS = ["stocks", "investing", "wallstreetbets"]
+# ── Per-ticker config ─────────────────────────────────────────────────────────
+TICKER_CONFIGS = {
+    "AAPL": {
+        "keywords"   : ["AAPL", "Apple"],
+        "subreddits" : ["stocks", "investing", "wallstreetbets"],
+    },
+    "MSFT": {
+        "keywords"   : ["MSFT", "Microsoft"],
+        "subreddits" : ["stocks", "investing", "wallstreetbets", "microsoft"],
+    },
+    "NVDA": {
+        "keywords"   : ["NVDA", "Nvidia", "NVIDIA"],
+        "subreddits" : ["stocks", "investing", "wallstreetbets", "nvidia"],
+    },
+}
+
+TICKER = sys.argv[1].upper() if len(sys.argv) > 1 else "AAPL"
+if TICKER not in TICKER_CONFIGS:
+    print(f"Unknown ticker '{TICKER}'. Supported: {list(TICKER_CONFIGS.keys())}")
+    sys.exit(1)
+
+KEYWORDS   = TICKER_CONFIGS[TICKER]["keywords"]
+SUBREDDITS = TICKER_CONFIGS[TICKER]["subreddits"]
 
 EASTERN           = pytz.timezone("US/Eastern")
 MARKET_CLOSE_HOUR = 16
 
-BASE_URL    = "https://arctic-shift.photon-reddit.com/api/posts/search"
-DATA_DIR    = "data"
-CSV_PATH    = os.path.join(DATA_DIR, f"S_t_raw_{TICKER}_reddit.csv")
+BASE_URL  = "https://arctic-shift.photon-reddit.com/api/posts/search"
+DATA_DIR  = "data"
+CSV_PATH  = os.path.join(DATA_DIR, f"S_t_raw_{TICKER}_reddit.csv")
+FULL_FETCH_START = "2018-01-01"  # used when no existing CSV found
 
 
 def date_to_ts(date_str: str) -> int:
@@ -43,8 +69,8 @@ def assign_trading_day(created_utc: int) -> str:
 
 
 def is_relevant(post: dict) -> bool:
-    combined = (post.get("title", "") + " " + post.get("selftext", "")).lower()
-    return any(kw.lower() in combined for kw in KEYWORDS)
+    title = (post.get("title", "") or "").lower()
+    return any(kw.lower() in title for kw in KEYWORDS)
 
 
 def fetch_posts(subreddit: str, after_ts: int, before_ts: int) -> list:
@@ -66,7 +92,9 @@ def fetch_posts(subreddit: str, after_ts: int, before_ts: int) -> list:
                 continue
             response.raise_for_status()
             return response.json().get("data", [])
-        except (requests.exceptions.ConnectionError, requests.exceptions.ReadTimeout):
+        except (requests.exceptions.ConnectionError,
+                requests.exceptions.ReadTimeout,
+                requests.exceptions.ChunkedEncodingError):
             wait = 30 * (attempt + 1)
             print(f"  Connection dropped, retrying in {wait}s...")
             time.sleep(wait)
@@ -93,40 +121,58 @@ def collect_subreddit(subreddit: str, start_date: str, end_date: str) -> list:
 
 
 def main():
-    # ── Find last date in existing CSV ────────────────────────────────────────
-    if not os.path.exists(CSV_PATH):
-        print(f"ERROR: {CSV_PATH} not found. Run step2a_reddit_raw.py first.")
-        return
+    print(f"\nRunning step2b for {TICKER}")
+    print(f"  Keywords   : {KEYWORDS}")
+    print(f"  Subreddits : {SUBREDDITS}")
 
-    existing = pd.read_csv(CSV_PATH)
-    last_date = pd.to_datetime(existing["trading_day"]).max()
-    # start fetching from the day after the last date we already have
-    start_date = (last_date + timedelta(days=1)).strftime("%Y-%m-%d")
-    end_date   = datetime.today().strftime("%Y-%m-%d")
+    end_date = datetime.today().strftime("%Y-%m-%d")
 
-    print(f"Existing data ends at: {last_date.date()}")
-    print(f"Fetching new posts from {start_date} to {end_date}")
-    print()
+    # ── Load existing CSV (may be partial from a previous interrupted run) ────
+    if os.path.exists(CSV_PATH):
+        existing = pd.read_csv(CSV_PATH)
+        global_last_date   = pd.to_datetime(existing["trading_day"]).max()
+        incremental_start  = (global_last_date + timedelta(days=1)).strftime("%Y-%m-%d")
+        already_fetched    = set(existing["subreddit"].unique()) if "subreddit" in existing.columns else set()
+        print(f"\nExisting CSV: {len(existing)} posts, ends {global_last_date.date()}")
+        if already_fetched:
+            print(f"  Subreddits already in CSV: {sorted(already_fetched)}")
+    else:
+        existing           = pd.DataFrame()
+        incremental_start  = None
+        already_fetched    = set()
+        print(f"\nNo existing CSV — full fetch from {FULL_FETCH_START}")
 
-    if start_date >= end_date:
-        print("Data is already up to date. Nothing to fetch.")
-        return
+    # ── Fetch per subreddit ───────────────────────────────────────────────────
+    # Each subreddit is saved to disk as soon as it completes.
+    # On a re-run after a crash, subreddits already in the CSV are skipped
+    # (for full-fetch mode) or only updated with new dates (incremental mode).
+    any_new = False
 
-    # ── Fetch new posts for each subreddit ────────────────────────────────────
-    new_rows = []
     for subreddit in SUBREDDITS:
-        print(f"--- Fetching r/{subreddit} ({start_date} → {end_date}) ---")
-        posts = collect_subreddit(subreddit, start_date, end_date)
+        if subreddit in already_fetched:
+            # Incremental: only fetch dates newer than what we already have
+            fetch_start = incremental_start
+            if fetch_start >= end_date:
+                print(f"\n  r/{subreddit}: already up to date, skipping")
+                continue
+            mode = "incremental"
+        else:
+            # Full fetch: this subreddit is missing from the CSV entirely
+            fetch_start = FULL_FETCH_START
+            mode = "full fetch"
+
+        print(f"\n--- r/{subreddit} [{mode}] ({fetch_start} → {end_date}) ---")
+        posts = collect_subreddit(subreddit, fetch_start, end_date)
         print(f"  Pulled {len(posts)} raw posts")
 
-        kept = 0
+        subreddit_rows = []
         for post in posts:
             if not is_relevant(post):
                 continue
             selftext = post.get("selftext", "") or ""
             if selftext == "[removed]":
                 selftext = ""
-            new_rows.append({
+            subreddit_rows.append({
                 "trading_day": assign_trading_day(post["created_utc"]),
                 "id":          post.get("id", ""),
                 "title":       post.get("title", ""),
@@ -136,24 +182,30 @@ def main():
                 "subreddit":   subreddit,
                 "source":      "reddit",
             })
-            kept += 1
-        print(f"  Kept {kept} relevant posts")
+        print(f"  Kept {len(subreddit_rows)} relevant posts")
 
-    # ── Merge with existing data and save ─────────────────────────────────────
-    if not new_rows:
-        print("\nNo new posts found — Arctic Shift may not have data past this date yet.")
-        print("The system will use existing data up to", last_date.date())
+        # ── Save incrementally after each subreddit ────────────────────────────
+        # Even if a later subreddit crashes, this one's data is safe on disk.
+        if subreddit_rows:
+            new_df   = pd.DataFrame(subreddit_rows)
+            combined = pd.concat([existing, new_df], ignore_index=True) if not existing.empty else new_df
+            combined = combined.drop_duplicates(subset=["id"]).sort_values("trading_day")
+            combined.to_csv(CSV_PATH, index=False)
+            # Update state for next iteration
+            existing        = combined
+            already_fetched = set(existing["subreddit"].unique())
+            any_new         = True
+            print(f"  ✓ Saved — {len(combined)} posts total in CSV")
+
+    # ── Final summary ─────────────────────────────────────────────────────────
+    if not any_new:
+        print("\nData is already up to date. Nothing to fetch.")
         return
 
-    new_df   = pd.DataFrame(new_rows)
-    combined = pd.concat([existing, new_df], ignore_index=True)
-    combined = combined.drop_duplicates(subset=["id"]).sort_values("trading_day")
-    combined.to_csv(CSV_PATH, index=False)
-
-    print(f"\nDone. Combined dataset: {len(combined)} posts")
-    print(f"  Old range: 2018-01-01 → {last_date.date()}")
-    print(f"  New range: 2018-01-01 → {pd.to_datetime(combined['trading_day']).max().date()}")
-    print(f"\nNext step: run python step3_sentiment_finbert.py")
+    final = pd.read_csv(CSV_PATH)
+    print(f"\nDone. {TICKER} dataset: {len(final)} posts total")
+    print(f"  Range: {pd.to_datetime(final['trading_day']).min().date()} → {pd.to_datetime(final['trading_day']).max().date()}")
+    print(f"\nNext step: python step3_sentiment_finbert.py {TICKER}")
 
 
 if __name__ == "__main__":

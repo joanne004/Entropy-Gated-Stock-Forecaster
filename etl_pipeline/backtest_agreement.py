@@ -25,7 +25,7 @@ SCALER_PATH = "models/saved/lstm_scaler.pkl"
 
 FEATURES = [
     "returns", "log_returns",
-    "rsi_14", "adx_14", "macd",
+    "rsi_14", "adx_14", "macd", "vix",
     "sentiment", "entropy", "alpha", "post_count",
 ]
 WINDOW = 20

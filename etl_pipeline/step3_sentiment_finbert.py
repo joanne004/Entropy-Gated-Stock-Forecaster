@@ -2,15 +2,21 @@
 Step3 -- FinBERT Sentiment Scoring
 Loads the raw Reddit CSV, scores each post with FinBERT,
 and aggregates to daily S_t(sentiment) and H_t(entropy)
+
+Usage:
+  python step3_sentiment_finbert.py          # defaults to AAPL
+  python step3_sentiment_finbert.py MSFT
+  python step3_sentiment_finbert.py NVDA
 """
 
 
 import os
+import sys
 import numpy as np
 import pandas as pd
 from transformers import pipeline # transformers is the HuggingFace library that gives us FinBERT
 
-TICKER     = "AAPL"
+TICKER     = sys.argv[1].upper() if len(sys.argv) > 1 else "AAPL"
 DATA_DIR   = "data"
 INPUT_CSV  = os.path.join(DATA_DIR, f"S_t_raw_{TICKER}_reddit.csv")
 OUTPUT_CSV = os.path.join(DATA_DIR, f"S_t_{TICKER}_sentiment.csv")

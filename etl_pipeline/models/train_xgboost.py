@@ -18,6 +18,7 @@ import matplotlib.pyplot as plt
 from sqlalchemy import create_engine
 from xgboost import XGBClassifier
 from sklearn.metrics import accuracy_score, classification_report, ConfusionMatrixDisplay, confusion_matrix
+from sklearn.utils.class_weight import compute_sample_weight
 
 # ── Database connection ───────────────────────────────────────────────────────
 # POSTGRES_HOST comes from the environment when running inside Docker (= "postgres")
@@ -25,6 +26,8 @@ from sklearn.metrics import accuracy_score, classification_report, ConfusionMatr
 POSTGRES_HOST = os.environ.get("POSTGRES_HOST", "localhost")
 DB_URL        = f"postgresql://stockuser:stockpass@{POSTGRES_HOST}:5432/stockdb"
 engine        = create_engine(DB_URL) # sets up the connection to Postgres
+
+TICKERS = ["AAPL", "MSFT", "TSLA", "NVDA", "GOOGL"]
 
 
 # ── Feature columns ───────────────────────────────────────────────────────────
@@ -43,6 +46,7 @@ FEATURES = [
     "rsi_14",                                     # momentum 0-100        (bounded)
     "adx_14",                                     # trend strength 0-100  (bounded)
     "macd",                                       # MACD histogram — captures momentum reversals
+    "vix",                                        # market fear index — regime signal
     # obv removed — it is cumulative and grows over time (non-stationary)
     # the values during 2018-2022 training are completely different scales
     # to 2023-2024 test, so any split the model learns won't transfer
@@ -51,15 +55,18 @@ FEATURES = [
 
 
 # ── Step 1: Load data ─────────────────────────────────────────────────────────
-def load_data() -> pd.DataFrame:
+def load_data(ticker: str) -> pd.DataFrame:
     """
-    Pulls the full fused_features table from PostgresSQL
+    Pulls fused_features for a single ticker from PostgreSQL.
     Sorts oldest to newest so the chronological split works correctly.
     """
-    print(f"Loading fused_features table from PostgresSQL...")
-    df = pd.read_sql("SELECT * FROM fused_features  ORDER BY date ASC", engine)
+    print(f"Loading fused_features for {ticker}...")
+    df = pd.read_sql(
+        f"SELECT * FROM fused_features WHERE ticker = '{ticker}' ORDER BY date ASC",
+        engine,
+    )
     df["date"] = pd.to_datetime(df["date"])
-    print(f" Loaded {len(df)} rows ({df["date"].min().date()} -> {df["date"].max().date()})")
+    print(f"  Loaded {len(df)} rows ({df['date'].min().date()} → {df['date'].max().date()})")
     return df
 
 
@@ -137,31 +144,55 @@ def train_model(X_train, y_train, X_test, y_test) -> XGBClassifier:
     # so the model stops defaulting to UP for everything uncertain.
     down_days = int((y_train == 0).sum())
     up_days   = int((y_train == 1).sum())
-    spw       = down_days / up_days # tell XGBoost that missing a DOWN day costs more
-    print(f"  scale_pos_weight = {spw:.3f}  (DOWN={down_days}, UP={up_days})")
+    # scale_pos_weight is kept at 1.0 (neutral) when using logloss.
+    # scale_pos_weight modifies the gradient computation — with logloss this
+    # distorts the probability targets and early stopping fires immediately (best=0).
+    # Instead we use sample_weight in fit() which reweights individual sample losses.
+    # compute_sample_weight('balanced') gives DOWN and UP equal total weight,
+    # computed from the actual class split — generic, no per-ticker hardcoding.
+    spw = 1.0
+    sample_weights = compute_sample_weight('balanced', y_train)
+    sw_down = sample_weights[y_train == 0][0]
+    sw_up   = sample_weights[y_train == 1][0]
+    print(f"  scale_pos_weight = {spw:.3f}  (neutral — class balance via sample_weight)")
+    print(f"  sample_weight: DOWN={sw_down:.4f}  UP={sw_up:.4f}  (balanced from data)")
+    print(f"  Class distribution: DOWN={down_days}, UP={up_days}")
 
     model = XGBClassifier(
         n_estimators          = 500,
-        learning_rate         = 0.01,  # small steps so more trees can train
-        max_depth             = 3,     # shallower trees = simpler rules = less overfitting
-        min_child_weight      = 10,    # a leaf needs at least 10 rows before splitting
-                                       # stops the model fitting splits on tiny noisy groups. Without this, the model can create splits that apply to 2 or 3 very specific rows which causes memorization
+        learning_rate         = 0.01,   # small steps so more trees can train
+        max_depth             = 4,      # one level deeper than before — captures 2-way feature
+                                        # interactions (e.g. RSI high AND VIX rising → DOWN)
+                                        # without going so deep the model memorises noise
+        min_child_weight      = 5,      # relaxed from 10 → 5: each leaf needs 5 samples minimum
+                                        # diagnosis showed MSFT has real MI signal in RSI/VIX/sentiment;
+                                        # 10 was too conservative and prevented those splits from forming
         subsample             = 0.8,
         colsample_bytree      = 0.8,
-        early_stopping_rounds = 30,
-        scale_pos_weight      = spw,   # balance DOWN vs UP
-        eval_metric           = "auc",     # AUC measures ranking quality not probability calibration, AUC measures whether the model correctly ranks UP days as more likely than DOWN days
-                                           # more robust when scale_pos_weight shifts probabilities
+        early_stopping_rounds = 50,     # increased from 30 → 50: gives logloss more room to improve
+                                        # before stopping — AUC plateaus immediately on weak signal,
+                                        # logloss keeps improving gradually so needs more patience
+        scale_pos_weight      = spw,    # kept at 1.0 — class balance is handled by sample_weight
+                                        # in fit() which doesn't conflict with logloss
+        eval_metric           = "logloss",  # changed from "auc" — this was the root cause of
+                                            # 1-7 trees: AUC on a near-50/50 dataset is flat and
+                                            # triggers early stopping immediately. logloss rewards
+                                            # small probability improvements each tree so the model
+                                            # keeps growing and learning the weak signal that exists
         random_state          = 42,
         verbosity             = 1,
     )
 
     # eval_set lets XGBoost check test error after every tree
     # verbose=50 prints a status update every 50 trees
+    # sample_weight tells XGBoost to penalise misclassifying DOWN days equally
+    # to UP days during training. The validation set (eval_set) stays unweighted
+    # so early stopping measures true generalisation, not the weighted training loss.
     model.fit(
         X_train, y_train,
-        eval_set = [(X_test, y_test)], # after every tree, XGBoost silently checks the error on this validation set. This is what early stopping uses to decide when to stop.
-        verbose  = 50, # prints a status line every 50 trees 
+        sample_weight = sample_weights,  # balanced weights — DOWN gets extra emphasis
+        eval_set = [(X_test, y_test)],   # unweighted validation — fair early stopping
+        verbose  = 50,
     )
 
     print(f"\n  Best number of trees: {model.best_iteration}") # tells you which tree number had the lowest test error
@@ -193,7 +224,7 @@ def evaluate(model, X_train, y_train, X_test, y_test):
     print(f"  Train accuracy : {train_acc:.4f}  ({train_acc*100:.1f}%)")
     print(f"  Test  accuracy : {test_acc:.4f}  ({test_acc*100:.1f}%)")
     if train_acc - test_acc > 0.10:
-        print("  ⚠  Gap > 10% — model may be overfitting")
+        print(f"  Train-test gap: {(train_acc - test_acc)*100:.1f}%")
     print(f"{'='*45}")
 
     print("\nClassification Report (Test Set):")
@@ -236,41 +267,52 @@ def plot_feature_importance(model):
 
 
 # ── Step 7: Save model ────────────────────────────────────────────────────────
-def save_model(model):
+def save_model(model, ticker: str):
     """
-    Saves the trained model as a JSON file.
-    The inference server will load this file to make predictions
-    without needing to retrain.
+    Saves the trained model as a JSON file named by ticker.
+    The inference server loads the correct file per ticker.
     """
-    path = "models/saved/xgboost_model.json"
+    path = f"models/saved/xgboost_{ticker}.json"
     model.save_model(path)
     print(f"\n  Model saved → {path}")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
-    # 1. Load
-    df = load_data()
+    for ticker in TICKERS:
+        print(f"\n{'='*55}")
+        print(f"  XGBoost — Training for {ticker}")
+        print(f"{'='*55}")
 
-    # 2. Target
-    df = create_target(df)
+        # 1. Load
+        df = load_data(ticker)
+        if len(df) < 100:
+            print(f"  Skipping {ticker} — not enough rows ({len(df)})")
+            continue
 
-    # 3. Split
-    X_train, y_train, X_test, y_test = split_data(df)
+        # 2. Target
+        df = create_target(df)
 
-    # 4. Train
-    model = train_model(X_train, y_train, X_test, y_test)
+        # 3. Split
+        X_train, y_train, X_test, y_test = split_data(df)
 
-    # 5. Evaluate
-    evaluate(model, X_train, y_train, X_test, y_test)
+        # 4. Train
+        model = train_model(X_train, y_train, X_test, y_test)
 
-    # 6. Feature importance
-    plot_feature_importance(model)
+        # 5. Evaluate
+        evaluate(model, X_train, y_train, X_test, y_test)
 
-    # 7. Save
-    save_model(model)
+        # 6. Feature importance
+        plot_feature_importance(model)
 
-    print("\nDone. XGBoost training complete.")
+        # 7. Save
+        save_model(model, ticker)
+
+        print(f"\n  Done. {ticker} XGBoost complete.")
+
+    print(f"\n{'='*55}")
+    print(f"  All {len(TICKERS)} tickers trained.")
+    print(f"{'='*55}")
 
 
 if __name__ == "__main__":

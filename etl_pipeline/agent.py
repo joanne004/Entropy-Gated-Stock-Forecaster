@@ -1,16 +1,18 @@
 """
-Agentic Analyst — AAPL Stock Direction Agent
-=============================================
+Agentic Analyst — Multi-Stock Direction Agent
+==============================================
 A LangChain agent powered by Llama 3.3 70B via Groq API.
 
 The agent has 4 tools it can call in any order:
-  1. get_prediction        — calls the FastAPI inference server (/predict)
+  1. get_prediction        — calls the FastAPI inference server (/predict?ticker=...)
   2. get_latest_features   — fetches today's RSI, sentiment, entropy etc. from the DB
   3. get_entropy_history   — checks if today's entropy is unusually high (noisy signal)
   4. get_recent_performance — last 5 days of returns and sentiment trend
 
 The LLM decides which tools to call and in what order depending on your question.
 It loops — tool → result back to LLM → next tool → result → ... → final answer.
+
+Supported tickers: AAPL, MSFT, TSLA, NVDA, GOOGL
 
 Run with:
   python agent.py
@@ -34,24 +36,40 @@ from langgraph.prebuilt import create_react_agent
 
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-POSTGRES_HOST    = os.environ.get("POSTGRES_HOST", "localhost")
-DB_URL           = f"postgresql://stockuser:stockpass@{POSTGRES_HOST}:5432/stockdb"
-INFERENCE_SERVER = "http://localhost:8001"
+# Cloud (Neon): set DATABASE_URL in the environment
+# Local (Docker): set POSTGRES_HOST (defaults to localhost)
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if DATABASE_URL:
+    DB_URL = DATABASE_URL
+else:
+    POSTGRES_HOST = os.environ.get("POSTGRES_HOST", "localhost")
+    DB_URL = f"postgresql://stockuser:stockpass@{POSTGRES_HOST}:5432/stockdb"
+
+INFERENCE_SERVER  = os.environ.get("INFERENCE_SERVER_URL", "http://localhost:8001")
 ENTROPY_THRESHOLD = 0.75
-GROQ_API_KEY     = os.environ.get("GROQ_API_KEY", "")
+GROQ_API_KEY      = os.environ.get("GROQ_API_KEY", "")
+
+# Module-level ticker — set by ask_agent() before each call so all tools
+# automatically use whichever stock the user has selected in the UI.
+CURRENT_TICKER = "AAPL"
 
 
 # ── Tool 1: get_prediction ────────────────────────────────────────────────────
 @tool
 def get_prediction() -> dict:
     """
-    Call the inference server and get the next-day AAPL direction prediction.
+    Call the inference server and get the next-day direction prediction for the
+    currently selected stock ticker.
     Returns XGBoost probability, LSTM probability, combined probability, direction
     (UP, DOWN, or UNCERTAIN), and whether models agreed.
     Always call this first when the user asks about tomorrow's prediction.
     """
     try:
-        response = requests.get(f"{INFERENCE_SERVER}/predict", timeout=10)
+        response = requests.get(
+            f"{INFERENCE_SERVER}/predict",
+            params  = {"ticker": CURRENT_TICKER},
+            timeout = 10,
+        )
         return response.json()
     except Exception as e:
         return {"error": str(e), "message": "Inference server may not be running"}
@@ -61,13 +79,13 @@ def get_prediction() -> dict:
 @tool
 def get_latest_features() -> dict:
     """
-    Get today's feature values from the database.
-    Returns RSI-14, ADX-14, MACD, sentiment score, entropy, alpha, post_count, and daily returns.
+    Get the most recent feature values from the database for the selected ticker.
+    Returns RSI-14, ADX-14, MACD, VIX, sentiment score, entropy, alpha, post_count, and daily returns.
     Call this when the user asks what the indicators look like or why the model made a prediction.
     """
     engine = create_engine(DB_URL)
     df = pd.read_sql(
-        "SELECT * FROM fused_features ORDER BY date DESC LIMIT 1",
+        f"SELECT * FROM fused_features WHERE ticker = '{CURRENT_TICKER}' ORDER BY date DESC LIMIT 1",
         engine,
     )
     row = df.iloc[0]
@@ -77,6 +95,7 @@ def get_latest_features() -> dict:
         "rsi_14"     : round(float(row["rsi_14"]),     2),
         "adx_14"     : round(float(row["adx_14"]),     2),
         "macd"       : round(float(row["macd"]),       4),
+        "vix"        : round(float(row["vix"]),        2),
         "sentiment"  : round(float(row["sentiment"]),  4),
         "entropy"    : round(float(row["entropy"]),    4),
         "alpha"      : round(float(row["alpha"]),      4),
@@ -88,14 +107,15 @@ def get_latest_features() -> dict:
 @tool
 def get_entropy_history() -> dict:
     """
-    Get the last 30 days of entropy values to check if today's entropy is unusually high.
+    Get the last 30 days of entropy values for the selected ticker.
     High entropy means Reddit sentiment is divided — the signal is noisy and predictions
-    should be treated with caution.
+    should be treated with caution. For non-AAPL tickers entropy is always log(3) (max)
+    because there is no Reddit sentiment data for them.
     Call this when assessing prediction confidence or when the user asks about uncertainty.
     """
     engine = create_engine(DB_URL)
     df = pd.read_sql(
-        "SELECT date, entropy FROM fused_features ORDER BY date DESC LIMIT 30",
+        f"SELECT date, entropy FROM fused_features WHERE ticker = '{CURRENT_TICKER}' ORDER BY date DESC LIMIT 30",
         engine,
     )
     df = df.iloc[::-1].reset_index(drop=True)
@@ -115,13 +135,13 @@ def get_entropy_history() -> dict:
 @tool
 def get_recent_performance() -> dict:
     """
-    Get the last 5 trading days of price returns, sentiment, and closing price.
+    Get the last 5 trading days of price returns, sentiment, and closing price for the selected ticker.
     Useful for showing the recent trend context around today's prediction.
     Call this when the user asks about recent market behaviour or trend.
     """
     engine = create_engine(DB_URL)
     df = pd.read_sql(
-        "SELECT date, returns, sentiment, close FROM fused_features ORDER BY date DESC LIMIT 5",
+        f"SELECT date, returns, sentiment, close FROM fused_features WHERE ticker = '{CURRENT_TICKER}' ORDER BY date DESC LIMIT 5",
         engine,
     )
     df = df.iloc[::-1].reset_index(drop=True)
@@ -146,8 +166,11 @@ llm = ChatGroq(
 
 
 # ── System prompt — one-shot + chain-of-thought ───────────────────────────────
-system_prompt = SystemMessage(content="""You are an expert financial analyst assistant for AAPL stock prediction.
-You have access to live prediction data, technical indicators, and Reddit sentiment signals.
+system_prompt = SystemMessage(content="""You are an expert financial analyst assistant for stock direction prediction.
+You support multiple stocks: AAPL, MSFT, TSLA, NVDA, GOOGL.
+The user has selected a specific ticker — all your tool calls will automatically query that ticker.
+Note: Reddit sentiment data is only available for AAPL. For other tickers, entropy will always be at maximum (log(3)) and sentiment will be 0 — make sure to mention this when discussing non-AAPL predictions.
+You have access to live prediction data and technical indicators.
 
 TOOL SELECTION — call only the tools relevant to the question:
   - Questions about tomorrow's prediction → get_prediction + get_entropy_history
@@ -171,7 +194,8 @@ consistent, so the signal is reliable. Sentiment score is mildly positive at +0.
 
 **Technical picture:** RSI at 54 (neutral, no overbought/oversold warning). MACD histogram
 positive at +0.31 — short-term momentum is above long-term, supporting the UP call.
-ADX at 22 — market is trending but not strongly.
+ADX at 22 — market is trending but not strongly. VIX at 14.2 — market is calm, trends
+more likely to hold. (VIX above 25 = elevated fear, above 35 = panic/crisis)
 
 **Recent trend:** AAPL has been up 3 of the last 5 days with improving sentiment. The trend
 supports the model's prediction.
@@ -194,11 +218,14 @@ agent = create_react_agent(llm, tools, prompt=system_prompt)
 
 
 # ── ask_agent() — callable by Streamlit ───────────────────────────────────────
-def ask_agent(question: str) -> str:
+def ask_agent(question: str, ticker: str = "AAPL") -> str:
     """
     Single-question interface for Streamlit.
+    Sets CURRENT_TICKER before invoking so all tools query the right stock.
     Returns the agent's final answer as a plain string.
     """
+    global CURRENT_TICKER
+    CURRENT_TICKER = ticker.upper()
     try:
         response = agent.invoke({"messages": [("user", question)]})
         return response["messages"][-1].content

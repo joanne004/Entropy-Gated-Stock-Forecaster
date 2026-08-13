@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: stock-inference-server
+    runtime: python
+    buildCommand: pip install fastapi uvicorn[standard] sqlalchemy psycopg2-binary pandas numpy scikit-learn xgboost tensorflow joblib python-dotenv langchain langchain-groq langgraph requests
+    startCommand: uvicorn inference_server:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+
+    envVars:
+      # Set these in the Render dashboard — do NOT hardcode values here
+      - key: DATABASE_URL
+        sync: false          # set manually in Render dashboard (Neon connection string)
+      - key: GROQ_API_KEY
+        sync: false          # set manually in Render dashboard
+      # INFERENCE_SERVER_URL is not needed on Render itself (it IS the server)
