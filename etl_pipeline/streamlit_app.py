@@ -61,9 +61,6 @@ def fetch_prediction(ticker: str = "AAPL"):
         return {"error": str(e)}
 
 
-pred = fetch_prediction(ticker)
-
-
 # ── Layout: left = prediction panel, right = chat ─────────────────────────────
 left, right = st.columns([1, 1.6], gap="large")
 
@@ -72,9 +69,21 @@ left, right = st.columns([1, 1.6], gap="large")
 with left:
     st.subheader(f"{ticker} — Next-Day Prediction")
 
-    if "error" in pred:
+    # Prediction is fetched on demand (not at page load) so the page renders
+    # instantly even when the inference server is sleeping.
+    cache_key = f"pred_{ticker}"
+
+    if st.button("🔄 Get Prediction", type="primary"):
+        with st.spinner("Querying inference server — may take up to 60s on first load…"):
+            st.session_state[cache_key] = fetch_prediction(ticker)
+
+    pred = st.session_state.get(cache_key)
+
+    if pred is None:
+        st.info("Click **Get Prediction** to fetch the latest forecast.")
+    elif "error" in pred:
         st.error(f"Inference server not reachable: {pred['error']}")
-        st.info("Start the server with:\n```\npython -m uvicorn inference_server:app --port 8001\n```")
+        st.caption("The server may be waking up — wait 60 s and try again.")
     else:
         direction = pred.get("combined_direction", "UNCERTAIN")
         agreement = pred.get("model_agreement", False)
@@ -93,8 +102,6 @@ with left:
         st.divider()
 
         # Model probabilities
-        # Numeric delta = prob minus 50% baseline.
-        # Positive → green up arrow (UP), negative → red down arrow (DOWN).
         st.markdown("**Model Probabilities**")
         col1, col2 = st.columns(2)
         xgb_prob = pred.get("xgb_probability_up", 0.5)
@@ -118,13 +125,6 @@ with left:
             st.success("✅ Models in agreement — higher confidence")
         else:
             st.warning("⚠️ Models disagree — treat as UNCERTAIN")
-
-        st.divider()
-
-        # Refresh button
-        if st.button("🔄 Refresh Prediction"):
-            st.cache_data.clear()
-            st.rerun()
 
 
 # ── RIGHT: Agent chat ─────────────────────────────────────────────────────────
