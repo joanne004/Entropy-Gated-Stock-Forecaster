@@ -4,9 +4,6 @@ Streamlit UI — Multi-Stock Direction Predictor
 Run with:
   streamlit run streamlit_app.py
 
-Make sure the inference server is running first:
-  python -m uvicorn inference_server:app --port 8001
-
 Supported tickers: AAPL, MSFT, TSLA, NVDA, GOOGL
 Note: Reddit sentiment is only available for AAPL.
 """
@@ -54,7 +51,7 @@ def fetch_prediction(ticker: str = "AAPL"):
         r = requests.get(
             f"{INFERENCE_SERVER_URL}/predict",
             params  = {"ticker": ticker},
-            timeout = 60,  # Render free tier needs ~30-60s to wake up
+            timeout = 30,
         )
         return r.json()
     except Exception as e:
@@ -69,12 +66,10 @@ left, right = st.columns([1, 1.6], gap="large")
 with left:
     st.subheader(f"{ticker} — Next-Day Prediction")
 
-    # Prediction is fetched on demand (not at page load) so the page renders
-    # instantly even when the inference server is sleeping.
     cache_key = f"pred_{ticker}"
 
     if st.button("🔄 Get Prediction", type="primary"):
-        with st.spinner("Querying inference server — may take up to 60s on first load…"):
+        with st.spinner("Fetching prediction…"):
             st.session_state[cache_key] = fetch_prediction(ticker)
 
     pred = st.session_state.get(cache_key)
@@ -83,13 +78,11 @@ with left:
         st.info("Click **Get Prediction** to fetch the latest forecast.")
     elif "error" in pred:
         st.error(f"Inference server not reachable: {pred['error']}")
-        st.caption("The server may be waking up — wait 60 s and try again.")
     else:
         direction = pred.get("combined_direction", "UNCERTAIN")
         agreement = pred.get("model_agreement", False)
         as_of     = pred.get("as_of_date", "—")
 
-        # Big direction indicator
         if direction == "UP":
             st.success(f"## ▲  {direction}")
         elif direction == "DOWN":
@@ -101,7 +94,6 @@ with left:
 
         st.divider()
 
-        # Model probabilities
         st.markdown("**Model Probabilities**")
         col1, col2 = st.columns(2)
         xgb_prob = pred.get("xgb_probability_up", 0.5)
@@ -120,7 +112,6 @@ with left:
 
         st.divider()
 
-        # Agreement status
         if agreement:
             st.success("✅ Models in agreement — higher confidence")
         else:
@@ -132,16 +123,13 @@ with right:
     st.subheader("Ask the Analyst Agent")
     st.caption(f"Powered by Llama 3.3 70B via Groq · Analysing {ticker}")
 
-    # Reset chat history when ticker changes
     if st.session_state.get("last_ticker") != ticker:
         st.session_state.messages = []
         st.session_state["last_ticker"] = ticker
 
-    # Initialise chat history in session state
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
-    # Render chat history
     chat_container = st.container(height=480)
     with chat_container:
         if not st.session_state.messages:
@@ -153,9 +141,7 @@ with right:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
 
-    # Chat input
     if prompt := st.chat_input(f"Ask about {ticker}..."):
-        # Add user message to history and rerender
         st.session_state.messages.append({"role": "user", "content": prompt})
 
         with chat_container:
@@ -170,7 +156,6 @@ with right:
         st.session_state.messages.append({"role": "assistant", "content": answer})
         st.rerun()
 
-    # Clear chat button
     if st.session_state.messages:
         if st.button("🗑️ Clear chat"):
             st.session_state.messages = []
