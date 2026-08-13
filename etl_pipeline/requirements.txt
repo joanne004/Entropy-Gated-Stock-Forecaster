@@ -1,31 +1,17 @@
-# ── Inference server (Render) ─────────────────────────────────────────────────
-fastapi
-uvicorn[standard]
-python-dotenv
-
 # ── Streamlit UI (Streamlit Cloud) ────────────────────────────────────────────
 streamlit
 requests
+python-dotenv
 
 # ── Agent / LLM ───────────────────────────────────────────────────────────────
 langchain
 langchain-groq
 langgraph
 
-# ── Database ──────────────────────────────────────────────────────────────────
+# ── Database (agent queries Neon directly) ────────────────────────────────────
 sqlalchemy
 psycopg2-binary
 
-# ── Data & ML ─────────────────────────────────────────────────────────────────
+# ── Data (agent uses pandas/numpy for DB results) ─────────────────────────────
 pandas
 numpy
-scikit-learn
-xgboost
-tensorflow-cpu
-joblib
-
-# ── Local pipeline (ETL, scraping, FinBERT) — NOT needed on Render/Streamlit──
-# Install separately locally: pip install yfinance ta transformers torch pytz
-yfinance
-ta
-pytz

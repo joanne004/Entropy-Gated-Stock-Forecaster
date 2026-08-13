@@ -1,0 +1,27 @@
+# ── Inference server (Render) — full ML stack ─────────────────────────────────
+fastapi
+uvicorn[standard]
+python-dotenv
+
+# ── Agent / LLM ───────────────────────────────────────────────────────────────
+langchain
+langchain-groq
+langgraph
+
+# ── Database ──────────────────────────────────────────────────────────────────
+sqlalchemy
+psycopg2-binary
+
+# ── Data & ML ─────────────────────────────────────────────────────────────────
+pandas
+numpy
+scikit-learn
+xgboost
+tensorflow-cpu
+joblib
+
+# ── Local pipeline (ETL, scraping, FinBERT) — NOT needed on Render ─────────────
+# Install separately locally: pip install yfinance ta transformers torch pytz
+yfinance
+ta
+pytz
