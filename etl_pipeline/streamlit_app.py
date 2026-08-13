@@ -53,9 +53,12 @@ def fetch_prediction(ticker: str = "AAPL"):
             params  = {"ticker": ticker},
             timeout = 30,
         )
-        return r.json()
+        try:
+            return r.json()
+        except Exception:
+            return {"error": f"HTTP {r.status_code} — {r.text[:300] or '(empty body)'} [URL: {INFERENCE_SERVER_URL}]"}
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": f"{type(e).__name__}: {e} [URL: {INFERENCE_SERVER_URL}]"}
 
 
 # ── Layout: left = prediction panel, right = chat ─────────────────────────────
