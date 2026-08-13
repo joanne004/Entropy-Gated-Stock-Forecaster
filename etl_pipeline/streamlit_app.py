@@ -8,14 +8,13 @@ Supported tickers: AAPL, MSFT, TSLA, NVDA, GOOGL
 Note: Reddit sentiment is only available for AAPL.
 """
 
-import os
-import requests
 import streamlit as st
 from dotenv import load_dotenv
 
 load_dotenv()  # load GROQ_API_KEY from .env before importing agent
 
 from agent import ask_agent
+from predictor import _load_models, predict
 
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -42,23 +41,15 @@ ticker = st.selectbox(
 st.divider()
 
 
-# ── Fetch prediction from inference server ────────────────────────────────────
-INFERENCE_SERVER_URL = os.environ.get("INFERENCE_SERVER_URL", "http://localhost:8001")
+# ── Load models once (cached) ─────────────────────────────────────────────────
+models = _load_models()
 
 
 def fetch_prediction(ticker: str = "AAPL"):
     try:
-        r = requests.get(
-            f"{INFERENCE_SERVER_URL}/predict",
-            params  = {"ticker": ticker},
-            timeout = 30,
-        )
-        try:
-            return r.json()
-        except Exception:
-            return {"error": f"HTTP {r.status_code} — {r.text[:300] or '(empty body)'} [URL: {INFERENCE_SERVER_URL}]"}
+        return predict(ticker, models)
     except Exception as e:
-        return {"error": f"{type(e).__name__}: {e} [URL: {INFERENCE_SERVER_URL}]"}
+        return {"error": str(e)}
 
 
 # ── Layout: left = prediction panel, right = chat ─────────────────────────────

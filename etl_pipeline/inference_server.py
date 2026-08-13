@@ -54,6 +54,9 @@ LSTM_WEIGHT    = 0.15
 LSTM_THRESHOLD = 0.50  # standard threshold — LSTM is confirmation signal at 15% weight
 
 
+# ── Database engine (module-level — reuse pool across all requests) ───────────
+engine = create_engine(DB_URL, pool_pre_ping=True)
+
 # ── In-memory model store ─────────────────────────────────────────────────────
 # models[ticker] = {"xgb": ..., "lstm": ..., "scaler": ...}
 # Every request reads from this dict — no disk access after startup.
@@ -71,6 +74,11 @@ async def lifespan(app: FastAPI):
     request can use them instantly without touching disk again.
     Tickers whose saved files don't exist yet are skipped with a warning.
     """
+    # Limit TF to only allocate RAM it actually needs (not grab everything)
+    import tensorflow as tf
+    for gpu in tf.config.list_physical_devices("GPU"):
+        tf.config.experimental.set_memory_growth(gpu, True)
+
     print("\nLoading models...")
 
     for ticker in TICKERS:
@@ -96,7 +104,14 @@ async def lifespan(app: FastAPI):
     if not models:
         print("  ⚠ No models loaded — train the models first.")
     else:
-        print(f"\nAll models ready ({list(models.keys())}) — server is live.\n")
+        print(f"\nAll models ready ({list(models.keys())}) — warming up TF...")
+        # Run a dummy inference on the first loaded ticker so TF builds its
+        # computation graph now (at startup) instead of on the first real request.
+        # This prevents the first-request memory spike that causes 502s.
+        first = next(iter(models.values()))
+        dummy = np.zeros((1, WINDOW, len(FEATURES)), dtype="float32")
+        first["lstm"].predict(dummy, verbose=0)
+        print("TF warmup done — server is live.\n")
 
     yield   # <-- server runs here, handling incoming requests
 
@@ -157,7 +172,6 @@ def predict(ticker: str = "AAPL"):
         )
 
     ticker_models = models[ticker]
-    engine = create_engine(DB_URL)
 
     # ── 2. Fetch latest rows ──────────────────────────────────────────────────
     # DESC + LIMIT 20 gets the 20 most recent rows newest-first.

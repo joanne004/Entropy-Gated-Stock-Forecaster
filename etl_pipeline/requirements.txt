@@ -12,6 +12,10 @@ langgraph
 sqlalchemy
 psycopg2-binary
 
-# ── Data (agent uses pandas/numpy for DB results) ─────────────────────────────
+# ── Data & ML (inference runs directly in Streamlit) ──────────────────────────
 pandas
 numpy
+scikit-learn
+xgboost
+tensorflow-cpu
+joblib
