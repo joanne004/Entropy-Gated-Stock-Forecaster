@@ -71,54 +71,60 @@ with left:
     if pred is None:
         st.info("Click **Get Prediction** to fetch the latest forecast.")
     elif "error" in pred:
-        st.error(f"Inference server not reachable: {pred['error']}")
+        st.error(f"Prediction error: {pred['error']}")
     else:
-        direction = pred.get("combined_direction", "UNCERTAIN")
-        agreement = pred.get("model_agreement", False)
-        as_of     = pred.get("as_of_date", "—")
+        xgb_dir        = pred.get("xgb_direction", "UNCERTAIN")
+        xgb_prob       = pred.get("xgb_probability_up", 0.5)
+        lstm_available = pred.get("lstm_available", False)
+        lstm_confirms  = pred.get("lstm_confirms", None)
+        as_of          = pred.get("as_of_date", "—")
 
-        if direction == "UP":
-            st.success(f"## ▲  {direction}")
-        elif direction == "DOWN":
-            st.error(f"## ▼  {direction}")
+        # Primary prediction from XGBoost
+        if xgb_dir == "UP":
+            st.success(f"## ▲  {xgb_dir}")
+        elif xgb_dir == "DOWN":
+            st.error(f"## ▼  {xgb_dir}")
         else:
-            st.warning(f"## —  {direction}")
+            st.warning(f"## —  {xgb_dir}")
 
         st.caption(f"Based on data as of **{as_of}** · Predicting next trading day")
 
         st.divider()
 
-        st.markdown("**Model Probabilities**")
-        lstm_available = pred.get("lstm_available", False)
+        st.markdown("**Model Signals**")
         col1, col2 = st.columns(2)
-        xgb_prob = pred.get("xgb_probability_up", 0.5)
-        xgb_dir  = pred.get("xgb_direction", "—")
-        col1.metric("XGBoost", f"{xgb_prob*100:.1f}% · {xgb_dir}",
-                    delta=round((xgb_prob - 0.5) * 100, 2),
-                    delta_color="normal")
+        col1.metric(
+            "XGBoost (primary)",
+            f"{xgb_prob*100:.1f}% UP",
+            delta=round((xgb_prob - 0.5) * 100, 2),
+            delta_color="normal",
+            help="Primary predictor — gradient-boosted trees on technical + sentiment features",
+        )
 
         if lstm_available:
             lstm_prob = pred.get("lstm_probability_up", 0.5)
             lstm_dir  = pred.get("lstm_direction", "—")
-            col2.metric("LSTM", f"{lstm_prob*100:.1f}% · {lstm_dir}",
-                        delta=round((lstm_prob - 0.5) * 100, 2),
-                        delta_color="normal")
+            col2.metric(
+                "LSTM (confirmation gate)",
+                f"{lstm_prob*100:.1f}% UP · {lstm_dir}",
+                delta=round((lstm_prob - 0.5) * 100, 2),
+                delta_color="normal",
+                help="Secondary model — confirms or flags disagreement. Does not alter the primary XGBoost signal.",
+            )
         else:
-            col2.metric("LSTM", "N/A", help="LSTM unavailable in this environment")
-
-        combined_pct = pred.get("combined_probability", 0.5) * 100
-        label = "Combined (85% XGB + 15% LSTM)" if lstm_available else "XGBoost (primary model)"
-        st.metric(label, f"{combined_pct:.1f}%")
+            col2.metric("LSTM (confirmation gate)", "N/A",
+                        help="LSTM requires TensorFlow locally. Not available in cloud deployment.")
 
         st.divider()
 
+        # Confidence indicator based on agreement gate
         if lstm_available:
-            if agreement:
-                st.success("✅ Models in agreement — higher confidence")
+            if lstm_confirms:
+                st.success("✅ LSTM confirms XGBoost — high-confidence signal")
             else:
-                st.warning("⚠️ Models disagree — treat as UNCERTAIN")
+                st.warning("⚠️ LSTM disagrees — treat with caution")
         else:
-            st.info("ℹ️ Running XGBoost-only mode (LSTM requires local TensorFlow)")
+            st.info("ℹ️ XGBoost-only mode — LSTM unavailable in this environment")
 
 
 # ── RIGHT: Agent chat ─────────────────────────────────────────────────────────

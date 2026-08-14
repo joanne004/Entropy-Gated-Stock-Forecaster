@@ -36,9 +36,7 @@ FEATURES = [
     "rsi_14", "adx_14", "macd", "vix",
     "sentiment", "entropy", "alpha", "post_count",
 ]
-WINDOW      = 20
-XGB_WEIGHT  = 0.85
-LSTM_WEIGHT = 0.15
+WINDOW = 20
 
 
 @st.cache_resource
@@ -106,29 +104,30 @@ def predict(ticker: str, models: dict) -> dict:
     # ── LSTM (only when TF is available) ─────────────────────────────────────
     lstm_available = m["lstm"] is not None and m["scaler"] is not None
 
+    # ── LSTM (agreement gate — confirmation only, not blended) ───────────────
+    # XGBoost is the primary predictor. LSTM acts as a binary gate:
+    #   when both models predict the same direction → HIGH confidence
+    #   when they disagree → flag as UNCERTAIN (but still use XGBoost signal)
     if lstm_available:
         X_scaled       = m["scaler"].transform(df[FEATURES].values.astype(float))
         lstm_prob_up   = float(m["lstm"].predict(X_scaled[np.newaxis, :, :], verbose=0)[0][0])
         lstm_direction = "UP" if lstm_prob_up > 0.5 else "DOWN"
-        combined_prob  = XGB_WEIGHT * xgb_prob_up + LSTM_WEIGHT * lstm_prob_up
-        combined_dir   = xgb_direction if xgb_direction == lstm_direction else "UNCERTAIN"
-        agreement      = xgb_direction == lstm_direction
+        lstm_confirms  = xgb_direction == lstm_direction
     else:
         lstm_prob_up   = None
         lstm_direction = "N/A"
-        combined_prob  = xgb_prob_up
-        combined_dir   = xgb_direction
-        agreement      = None   # can't assess agreement without LSTM
+        lstm_confirms  = None  # LSTM not available
 
+    # Primary prediction always comes from XGBoost
     return {
-        "ticker"               : ticker,
-        "as_of_date"           : as_of_date,
-        "xgb_probability_up"   : round(xgb_prob_up,  4),
-        "xgb_direction"        : xgb_direction,
-        "lstm_probability_up"  : round(lstm_prob_up, 4) if lstm_prob_up is not None else None,
-        "lstm_direction"       : lstm_direction,
-        "combined_probability" : round(combined_prob, 4),
-        "combined_direction"   : combined_dir,
-        "model_agreement"      : agreement,
-        "lstm_available"       : lstm_available,
+        "ticker"             : ticker,
+        "as_of_date"         : as_of_date,
+        # XGBoost — primary predictor
+        "xgb_probability_up" : round(xgb_prob_up, 4),
+        "xgb_direction"      : xgb_direction,
+        # LSTM — confirmation gate
+        "lstm_probability_up": round(lstm_prob_up, 4) if lstm_prob_up is not None else None,
+        "lstm_direction"     : lstm_direction,
+        "lstm_confirms"      : lstm_confirms,   # True=agree(high conf), False=disagree, None=unavailable
+        "lstm_available"     : lstm_available,
     }
