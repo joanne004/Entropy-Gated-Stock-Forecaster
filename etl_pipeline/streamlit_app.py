@@ -89,27 +89,36 @@ with left:
         st.divider()
 
         st.markdown("**Model Probabilities**")
+        lstm_available = pred.get("lstm_available", False)
         col1, col2 = st.columns(2)
         xgb_prob = pred.get("xgb_probability_up", 0.5)
-        lstm_prob = pred.get("lstm_probability_up", 0.5)
         xgb_dir  = pred.get("xgb_direction", "—")
-        lstm_dir = pred.get("lstm_direction", "—")
         col1.metric("XGBoost", f"{xgb_prob*100:.1f}% · {xgb_dir}",
                     delta=round((xgb_prob - 0.5) * 100, 2),
                     delta_color="normal")
-        col2.metric("LSTM",    f"{lstm_prob*100:.1f}% · {lstm_dir}",
-                    delta=round((lstm_prob - 0.5) * 100, 2),
-                    delta_color="normal")
+
+        if lstm_available:
+            lstm_prob = pred.get("lstm_probability_up", 0.5)
+            lstm_dir  = pred.get("lstm_direction", "—")
+            col2.metric("LSTM", f"{lstm_prob*100:.1f}% · {lstm_dir}",
+                        delta=round((lstm_prob - 0.5) * 100, 2),
+                        delta_color="normal")
+        else:
+            col2.metric("LSTM", "N/A", help="LSTM unavailable in this environment")
 
         combined_pct = pred.get("combined_probability", 0.5) * 100
-        st.metric("Combined (85% XGB + 15% LSTM)", f"{combined_pct:.1f}%")
+        label = "Combined (85% XGB + 15% LSTM)" if lstm_available else "XGBoost (primary model)"
+        st.metric(label, f"{combined_pct:.1f}%")
 
         st.divider()
 
-        if agreement:
-            st.success("✅ Models in agreement — higher confidence")
+        if lstm_available:
+            if agreement:
+                st.success("✅ Models in agreement — higher confidence")
+            else:
+                st.warning("⚠️ Models disagree — treat as UNCERTAIN")
         else:
-            st.warning("⚠️ Models disagree — treat as UNCERTAIN")
+            st.info("ℹ️ Running XGBoost-only mode (LSTM requires local TensorFlow)")
 
 
 # ── RIGHT: Agent chat ─────────────────────────────────────────────────────────

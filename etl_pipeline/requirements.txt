@@ -14,8 +14,7 @@ psycopg2-binary
 
 # ── Data & ML (inference runs directly in Streamlit) ──────────────────────────
 pandas
-numpy<2.0
+numpy
 scikit-learn
 xgboost
-tensorflow-cpu==2.15.0
 joblib

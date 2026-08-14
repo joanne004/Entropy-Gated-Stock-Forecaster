@@ -3,6 +3,9 @@ predictor.py — Direct model inference for Streamlit
 ====================================================
 Loads models once at startup (cached via st.cache_resource) and runs
 inference directly inside the Streamlit process. No separate server needed.
+
+TensorFlow/LSTM is optional — if TF is not installed (e.g. on Streamlit Cloud),
+the predictor falls back to XGBoost-only mode automatically.
 """
 
 import os
@@ -11,6 +14,13 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from sqlalchemy import create_engine
+
+# Check TF availability at import time — no crash if missing
+try:
+    from tensorflow.keras.models import load_model as keras_load_model
+    TF_AVAILABLE = True
+except Exception:
+    TF_AVAILABLE = False
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if DATABASE_URL:
@@ -33,28 +43,39 @@ LSTM_WEIGHT = 0.15
 
 @st.cache_resource
 def _load_models():
-    """Load all ticker model trios from disk. Called once via st.cache_resource."""
+    """
+    Load all ticker models from disk. Called once via st.cache_resource.
+
+    If TF is available: loads XGBoost + LSTM + Scaler for each ticker (full hybrid).
+    If TF is not available: loads XGBoost only (deployed/cloud mode).
+    """
     from xgboost import XGBClassifier
-    from tensorflow.keras.models import load_model as keras_load_model
 
     store = {}
-    base = os.path.dirname(__file__)   # etl_pipeline/
-    for ticker in TICKERS:
-        xgb_path    = os.path.join(base, f"models/saved/xgboost_{ticker}.json")
-        lstm_path   = os.path.join(base, f"models/saved/lstm_{ticker}.keras")
-        scaler_path = os.path.join(base, f"models/saved/lstm_scaler_{ticker}.pkl")
+    base  = os.path.dirname(__file__)   # etl_pipeline/
 
-        missing = [p for p in [xgb_path, lstm_path, scaler_path] if not os.path.exists(p)]
-        if missing:
+    for ticker in TICKERS:
+        xgb_path = os.path.join(base, f"models/saved/xgboost_{ticker}.json")
+
+        if not os.path.exists(xgb_path):
             continue
 
         xgb = XGBClassifier()
         xgb.load_model(xgb_path)
-        store[ticker] = {
-            "xgb"   : xgb,
-            "lstm"  : keras_load_model(lstm_path),
-            "scaler": joblib.load(scaler_path),
-        }
+        entry = {"xgb": xgb, "lstm": None, "scaler": None}
+
+        if TF_AVAILABLE:
+            lstm_path   = os.path.join(base, f"models/saved/lstm_{ticker}.keras")
+            scaler_path = os.path.join(base, f"models/saved/lstm_scaler_{ticker}.pkl")
+            if os.path.exists(lstm_path) and os.path.exists(scaler_path):
+                try:
+                    entry["lstm"]   = keras_load_model(lstm_path)
+                    entry["scaler"] = joblib.load(scaler_path)
+                except Exception:
+                    pass  # LSTM load failed — stay in XGBoost-only mode
+
+        store[ticker] = entry
+
     return store
 
 
@@ -66,7 +87,7 @@ def predict(ticker: str, models: dict) -> dict:
 
     m      = models[ticker]
     engine = create_engine(DB_URL)
-    df = pd.read_sql(
+    df     = pd.read_sql(
         f"SELECT * FROM fused_features WHERE ticker = '{ticker}' ORDER BY date DESC LIMIT {WINDOW}",
         engine,
     )
@@ -77,27 +98,37 @@ def predict(ticker: str, models: dict) -> dict:
 
     as_of_date = str(df["date"].iloc[-1])[:10]
 
-    # XGBoost — single latest row
+    # ── XGBoost (always runs) ─────────────────────────────────────────────────
     xgb_proba     = m["xgb"].predict_proba(df[FEATURES].iloc[[-1]])[0]
     xgb_prob_up   = float(xgb_proba[1])
     xgb_direction = "UP" if xgb_prob_up > 0.5 else "DOWN"
 
-    # LSTM — 20-row scaled window
-    X_scaled       = m["scaler"].transform(df[FEATURES].values.astype(float))
-    lstm_prob_up   = float(m["lstm"].predict(X_scaled[np.newaxis, :, :], verbose=0)[0][0])
-    lstm_direction = "UP" if lstm_prob_up > 0.5 else "DOWN"
+    # ── LSTM (only when TF is available) ─────────────────────────────────────
+    lstm_available = m["lstm"] is not None and m["scaler"] is not None
 
-    combined_prob      = XGB_WEIGHT * xgb_prob_up + LSTM_WEIGHT * lstm_prob_up
-    combined_direction = xgb_direction if xgb_direction == lstm_direction else "UNCERTAIN"
+    if lstm_available:
+        X_scaled       = m["scaler"].transform(df[FEATURES].values.astype(float))
+        lstm_prob_up   = float(m["lstm"].predict(X_scaled[np.newaxis, :, :], verbose=0)[0][0])
+        lstm_direction = "UP" if lstm_prob_up > 0.5 else "DOWN"
+        combined_prob  = XGB_WEIGHT * xgb_prob_up + LSTM_WEIGHT * lstm_prob_up
+        combined_dir   = xgb_direction if xgb_direction == lstm_direction else "UNCERTAIN"
+        agreement      = xgb_direction == lstm_direction
+    else:
+        lstm_prob_up   = None
+        lstm_direction = "N/A"
+        combined_prob  = xgb_prob_up
+        combined_dir   = xgb_direction
+        agreement      = None   # can't assess agreement without LSTM
 
     return {
         "ticker"               : ticker,
         "as_of_date"           : as_of_date,
-        "xgb_probability_up"   : round(xgb_prob_up,   4),
+        "xgb_probability_up"   : round(xgb_prob_up,  4),
         "xgb_direction"        : xgb_direction,
-        "lstm_probability_up"  : round(lstm_prob_up,  4),
+        "lstm_probability_up"  : round(lstm_prob_up, 4) if lstm_prob_up is not None else None,
         "lstm_direction"       : lstm_direction,
         "combined_probability" : round(combined_prob, 4),
-        "combined_direction"   : combined_direction,
-        "model_agreement"      : xgb_direction == lstm_direction,
+        "combined_direction"   : combined_dir,
+        "model_agreement"      : agreement,
+        "lstm_available"       : lstm_available,
     }
