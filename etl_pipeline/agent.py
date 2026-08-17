@@ -225,7 +225,7 @@ def ask_agent(question: str, ticker: str = "AAPL") -> str:
     if _agent is None:
         key = os.environ.get("GROQ_API_KEY", "")
         _llm = ChatGroq(
-            model       = "llama-3.3-70b-versatile",
+            model       = "llama-3.1-8b-instant",
             temperature = 0.1,
             api_key     = key,
         )
@@ -240,10 +240,43 @@ def ask_agent(question: str, ticker: str = "AAPL") -> str:
 
 
 # ── CLI conversation loop ─────────────────────────────────────────────────────
+def _run_verbose(question: str, ticker: str = "AAPL"):
+    """Run agent and print every reasoning step (tool calls + outputs)."""
+    global CURRENT_TICKER, _llm, _agent
+    CURRENT_TICKER = ticker.upper()
+
+    if _agent is None:
+        key = os.environ.get("GROQ_API_KEY", "")
+        _llm = ChatGroq(
+            model       = "llama-3.1-8b-instant",
+            temperature = 0.1,
+            api_key     = key,
+        )
+        _tools = [get_prediction, get_latest_features, get_entropy_history, get_recent_performance]
+        _agent = create_react_agent(_llm, _tools, prompt=system_prompt)
+
+    response = _agent.invoke({"messages": [("user", question)]})
+
+    for msg in response["messages"]:
+        kind = type(msg).__name__
+        if kind == "HumanMessage":
+            continue  # already printed as "You:"
+        elif kind == "AIMessage":
+            if msg.tool_calls:
+                print("\n[Agent → Tool calls]")
+                for tc in msg.tool_calls:
+                    print(f"  → {tc['name']}({tc['args']})")
+            else:
+                print(f"\n[Agent — Final Answer]\n{msg.content}")
+        elif kind == "ToolMessage":
+            print(f"\n[Tool result: {msg.name}]")
+            print(f"  {msg.content[:500]}")  # cap at 500 chars to keep terminal readable
+
+
 if __name__ == "__main__":
     print("\n" + "=" * 55)
     print("  AAPL Analyst Agent  (powered by Llama 3.3 via Groq)")
-    print("  Type 'quit' to exit")
+    print("  Type 'quit' to exit | verbose ReAct steps shown")
     print("=" * 55)
 
     while True:
@@ -253,4 +286,4 @@ if __name__ == "__main__":
         if question.lower() in ("quit", "exit", "q"):
             print("Goodbye.")
             break
-        print(f"\nAgent: {ask_agent(question)}")
+        _run_verbose(question)
