@@ -225,7 +225,7 @@ def ask_agent(question: str, ticker: str = "AAPL") -> str:
     if _agent is None:
         key = os.environ.get("GROQ_API_KEY", "")
         _llm = ChatGroq(
-            model       = "llama-3.1-8b-instant",
+            model       = "openai/gpt-oss-20b",
             temperature = 0.1,
             api_key     = key,
         )
@@ -248,7 +248,7 @@ def _run_verbose(question: str, ticker: str = "AAPL"):
     if _agent is None:
         key = os.environ.get("GROQ_API_KEY", "")
         _llm = ChatGroq(
-            model       = "llama-3.1-8b-instant",
+            model       = "openai/gpt-oss-20b",
             temperature = 0.1,
             api_key     = key,
         )
